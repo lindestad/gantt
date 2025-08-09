@@ -7,6 +7,7 @@ export type Task = {
   progress: number; // 0-100
   color?: string;
   lane?: number; // vertical lane index
+  dependencies?: number[]; // predecessor task IDs
 }
 
 export type Project = {

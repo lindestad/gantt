@@ -19,11 +19,18 @@ export default function TaskForm({ project, onCreated }:{ project: Project, onCr
       </div>
       <div className="flex flex-col">
         <label className="text-xs text-slate-500">Start</label>
-        <input className="btn" type="date" value={start} onChange={e=>setStart(e.target.value)} />
+        <input className="btn" type="date" value={start} onChange={e=>{
+          const v = e.target.value
+          setStart(v)
+          if (end < v) setEnd(v)
+        }} />
       </div>
       <div className="flex flex-col">
         <label className="text-xs text-slate-500">End</label>
-        <input className="btn" type="date" value={end} onChange={e=>setEnd(e.target.value)} />
+        <input className="btn" type="date" value={end} min={start} onChange={e=>{
+          const v = e.target.value
+          if (v < start) { setEnd(start) } else { setEnd(v) }
+        }} />
       </div>
       <button className="btn btn-primary" onClick={submit}>Add task</button>
     </div>

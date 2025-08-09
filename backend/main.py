@@ -14,7 +14,7 @@ def parse_ts(value: str) -> datetime:
 
 from typing import Dict, List, Set, Optional
 
-from .database import SessionLocal, init_db, Project, Task
+from .database import SessionLocal, init_db, Project, Task, TaskDependency
 from .schemas import ProjectCreate, ProjectOut, TaskCreate, TaskOut
 
 app = FastAPI(title="Open Gantt API")
@@ -33,6 +33,22 @@ rooms: Dict[int, Set[WebSocket]] = {}
 
 
 def to_task_out(t: Task) -> TaskOut:
+    # Dependencies: list of predecessor IDs for this task
+    deps: list[int] = []
+    try:
+        from sqlalchemy import select as _select
+
+        with SessionLocal() as _db:
+            deps = [
+                row.depends_on_id
+                for row in _db.execute(
+                    _select(TaskDependency).where(TaskDependency.task_id == t.id)
+                )
+                .scalars()
+                .all()
+            ]
+    except Exception:
+        deps = []
     return TaskOut(
         id=t.id,
         project_id=t.project_id,
@@ -42,6 +58,7 @@ def to_task_out(t: Task) -> TaskOut:
         progress=t.progress,
         lane=t.lane,
         color=t.color,
+        dependencies=deps,
     )
 
 
@@ -96,6 +113,13 @@ def create_task(project_id: int, payload: TaskCreate):
         db.add(t)
         db.commit()
         db.refresh(t)
+        # write dependencies if provided
+        if payload.dependencies:
+            for dep_id in set(payload.dependencies):
+                if dep_id == t.id:
+                    continue
+                db.add(TaskDependency(task_id=t.id, depends_on_id=dep_id))
+            db.commit()
         out = to_task_out(t)
         # broadcast
         import anyio
@@ -128,6 +152,14 @@ def update_task(project_id: int, task_id: int, payload: TaskCreate):
         t.progress = float(payload.progress)
         t.lane = payload.lane or 0
         t.color = payload.color
+        db.commit()
+        # replace dependencies
+        db.query(TaskDependency).filter(TaskDependency.task_id == t.id).delete()
+        if payload.dependencies:
+            for dep_id in set(payload.dependencies):
+                if dep_id == t.id:
+                    continue
+                db.add(TaskDependency(task_id=t.id, depends_on_id=dep_id))
         db.commit()
         db.refresh(t)
         out = to_task_out(t)
