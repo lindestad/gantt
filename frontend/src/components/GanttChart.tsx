@@ -8,11 +8,22 @@ function startOfDay(d: Date){ const x = new Date(d); x.setHours(0,0,0,0); return
 function daysBetween(a: Date, b: Date){ return Math.round((startOfDay(b).getTime()-startOfDay(a).getTime())/86400000) }
 function addDays(d: Date, n: number){ const x = new Date(d); x.setDate(x.getDate()+n); return x }
 
+type DragState = {
+  id: number,
+  mode: 'move'|'resize-start'|'resize-end',
+  startX: number,
+  dxPx: number,
+  originalStart: string,
+  originalEnd: string
+}
+
 export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[], setTasks: (t: Task[])=>void, startDate: string }) {
   const [zoom, setZoom] = useState<Zoom>('week')
   const containerRef = useRef<HTMLDivElement>(null)
   const base = useMemo(()=> new Date(startDate), [startDate])
   const [menu, setMenu] = useState<{ x: number, y: number, taskId: number }|null>(null)
+  const [drag, setDrag] = useState<DragState|null>(null)
+  const dragRef = useRef<DragState|null>(null)
 
   const dayWidth = zoom === 'day' ? 48 : zoom === 'week' ? 24 : 12
   const rowHeight = 32
@@ -21,41 +32,58 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
   const spanDays = Math.max(60, ...tasks.map(t => daysBetween(base, new Date(t.end))+7))
   const headerDays = Array.from({length: spanDays}, (_,i)=> addDays(base, i))
 
-  function onDrag(task: Task, dxDays: number, resizeEdge?: 'start'|'end'){
-    const s = new Date(task.start); const e = new Date(task.end)
-    if(resizeEdge === 'start'){
+  function commitTaskChange(startTask: Task, dxDays: number, mode: 'move'|'resize-start'|'resize-end'){
+    const s = new Date(startTask.start); const e = new Date(startTask.end)
+    if(mode === 'resize-start'){
       s.setDate(s.getDate()+dxDays)
       if(s > e) s.setTime(e.getTime())
-    }else if(resizeEdge === 'end'){
+    }else if(mode === 'resize-end'){
       e.setDate(e.getDate()+dxDays)
       if(e < s) e.setTime(s.getTime())
     }else{
       s.setDate(s.getDate()+dxDays); e.setDate(e.getDate()+dxDays)
     }
-    const updated = { ...task, start: s.toISOString(), end: e.toISOString() }
-    setTasks(tasks.map(t => t.id === task.id ? updated : t))
-    updateTask(task.project_id, task.id, updated).catch(()=>{})
+    const updated = { ...startTask, start: s.toISOString(), end: e.toISOString() }
+    setTasks(tasks.map(t => t.id === startTask.id ? updated : t))
+    updateTask(startTask.project_id, startTask.id, updated).catch(()=>{})
   }
 
   function handlePointer(e: React.PointerEvent, task: Task, mode: 'move'|'resize-start'|'resize-end'){
     const startX = e.clientX
     const start = { ...task }
     ;(e.target as Element).setPointerCapture(e.pointerId)
+    const init: DragState = { id: task.id, mode, startX, dxPx: 0, originalStart: task.start, originalEnd: task.end }
+    setDrag(init)
+    dragRef.current = init
     function onMove(ev: PointerEvent){
-      const dx = ev.clientX - startX
-      const dxDays = Math.round(dx / dayWidth)
-      if(dxDays !== 0){
-        if(mode === 'move') onDrag(start, dxDays)
-        if(mode === 'resize-start') onDrag(start, dxDays, 'start')
-        if(mode === 'resize-end') onDrag(start, dxDays, 'end')
-      }
+      const next = dragRef.current ? { ...dragRef.current, dxPx: ev.clientX - dragRef.current.startX } : null
+      if(next){ dragRef.current = next; setDrag(next) }
     }
-    function onUp(){
+    function cleanup(){
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('keydown', onKey)
+    }
+    function onUp(){
+  const current = dragRef.current
+      cleanup()
+      setDrag(null)
+      if(!current) return
+      const dxDays = Math.round(current.dxPx / dayWidth)
+      if(dxDays !== 0){
+        const startTask = { ...start, start: current.originalStart, end: current.originalEnd }
+        commitTaskChange(startTask, dxDays, current.mode)
+      }
+    }
+    function onKey(ev: KeyboardEvent){
+      if(ev.key === 'Escape'){
+        cleanup()
+        setDrag(null)
+      }
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('keydown', onKey)
   }
 
   async function removeTask(task: Task){
@@ -166,10 +194,19 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
                 e.preventDefault()
                 setMenu({ x: e.clientX, y: e.clientY, taskId: t.id })
               }
+              const isDragging = drag && drag.id === t.id
+              // Compute pixel preview adjustments during drag for smoothness
+              const preview = isDragging ? drag : null
+              const previewTranslate = preview?.mode === 'move' || preview?.mode === 'resize-start' ? (preview.dxPx || 0) : 0
+              const previewWidth = preview ? (
+                preview.mode === 'resize-start' ? Math.max(16, w - (preview.dxPx || 0)) :
+                preview.mode === 'resize-end' ? Math.max(16, w + (preview.dxPx || 0)) :
+                Math.max(16, w)
+              ) : Math.max(16, w)
               return (
                 <div key={t.id} className="absolute" style={{ left: x + paddingLeft, top: y }}>
                   <div className="group relative h-6 rounded-md text-white shadow-sm select-none flex items-center"
-                    style={{ width: Math.max(16, w), background: t.color || 'rgba(15,23,42,0.9)' }}
+                    style={{ width: previewWidth, background: t.color || 'rgba(15,23,42,0.9)', transform: `translateX(${previewTranslate}px)` }}
                     onPointerDown={e=>handlePointer(e, t, 'move')}
                     onContextMenu={onContextMenu}
                   >
