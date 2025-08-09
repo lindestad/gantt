@@ -15,7 +15,7 @@ def parse_ts(value: str) -> datetime:
 from typing import Dict, List, Set, Optional
 
 from .database import SessionLocal, init_db, Project, Task, TaskDependency
-from .schemas import ProjectCreate, ProjectOut, TaskCreate, TaskOut
+from .schemas import ProjectCreate, ProjectOut, TaskCreate, TaskOut, TaskPatch
 
 app = FastAPI(title="Open Gantt API")
 app.add_middleware(
@@ -203,6 +203,49 @@ def delete_task(project_id: int, task_id: int):
 
         anyio.from_thread.run(_broadcast)
         return {"ok": True}
+
+
+@app.patch("/projects/{project_id}/tasks/{task_id}", response_model=TaskOut)
+def patch_task(project_id: int, task_id: int, payload: TaskPatch):
+    with SessionLocal() as db:
+        t: Optional[Task] = db.get(Task, task_id)
+        assert t and t.project_id == project_id
+        if payload.title is not None:
+            t.title = payload.title
+        if payload.start is not None:
+            t.start = parse_ts(payload.start)
+        if payload.end is not None:
+            t.end = parse_ts(payload.end)
+        if payload.progress is not None:
+            t.progress = float(payload.progress)
+        if payload.lane is not None:
+            t.lane = int(payload.lane)
+        if payload.color is not None:
+            t.color = payload.color
+        if payload.dependencies is not None:
+            db.query(TaskDependency).filter(TaskDependency.task_id == t.id).delete()
+            for dep_id in set(payload.dependencies or []):
+                if dep_id == t.id:
+                    continue
+                db.add(TaskDependency(task_id=t.id, depends_on_id=dep_id))
+        db.commit()
+        db.refresh(t)
+        out = to_task_out(t)
+    import anyio
+
+    async def _broadcast():
+        for ws in list(rooms.get(project_id, set())):
+            try:
+                import json
+
+                await ws.send_text(
+                    json.dumps({"type": "task_updated", "task": out.dict()})
+                )
+            except Exception:
+                rooms.get(project_id, set()).discard(ws)
+
+    anyio.from_thread.run(_broadcast)
+    return out
 
 
 @app.websocket("/ws/projects/{project_id}")

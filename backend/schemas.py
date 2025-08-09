@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional, List
 
 
 class ProjectCreate(BaseModel):
@@ -38,3 +39,13 @@ class TaskOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TaskPatch(BaseModel):
+    title: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    progress: Optional[float] = None
+    lane: Optional[int] = None
+    color: Optional[str] = None
+    dependencies: Optional[List[int]] = None

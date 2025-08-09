@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Task } from '../types'
-import { updateTask, deleteTask } from '../api'
+import { updateTask, deleteTask, patchTask } from '../api'
 
 type Zoom = 'day'|'week'|'month'
 
@@ -12,6 +12,7 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
   const [zoom, setZoom] = useState<Zoom>('week')
   const containerRef = useRef<HTMLDivElement>(null)
   const base = useMemo(()=> new Date(startDate), [startDate])
+  const [menu, setMenu] = useState<{ x: number, y: number, taskId: number }|null>(null)
 
   const dayWidth = zoom === 'day' ? 48 : zoom === 'week' ? 24 : 12
   const rowHeight = 32
@@ -163,14 +164,12 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
               const y = i * rowHeight + 4
               function onContextMenu(e: React.MouseEvent){
                 e.preventDefault()
-                // TODO: open custom context menu (colors, delete, etc.)
-                // for now, just log; wire up a menu component later
-                console.debug('context menu on task', t.id)
+                setMenu({ x: e.clientX, y: e.clientY, taskId: t.id })
               }
               return (
                 <div key={t.id} className="absolute" style={{ left: x + paddingLeft, top: y }}>
-                  <div className="group relative h-6 rounded-md bg-slate-900/90 text-white shadow-sm select-none flex items-center"
-                    style={{ width: Math.max(16, w) }}
+                  <div className="group relative h-6 rounded-md text-white shadow-sm select-none flex items-center"
+                    style={{ width: Math.max(16, w), background: t.color || 'rgba(15,23,42,0.9)' }}
                     onPointerDown={e=>handlePointer(e, t, 'move')}
                     onContextMenu={onContextMenu}
                   >
@@ -186,6 +185,23 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
           </div>
         </div>
       </div>
+      {menu && (
+        <div className="fixed z-50 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-slate-200 dark:ring-slate-700 rounded-md p-2 flex gap-2"
+             style={{ left: menu.x, top: menu.y }}
+             onMouseLeave={()=>setMenu(null)}
+        >
+          {['#0ea5e9','#22c55e','#eab308','#ef4444','#6366f1','#14b8a6','#f97316'].map(c => (
+            <button key={c} className="h-6 w-6 rounded" style={{ background: c }} onClick={async()=>{
+              const id = menu.taskId
+              const cur = tasks.find(x=>x.id===id)
+              if(!cur) return
+              setTasks(tasks.map(x=> x.id===id ? { ...x, color: c } : x))
+              setMenu(null)
+              await patchTask(cur.project_id, id, { color: c })
+            }} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -41,6 +41,15 @@ export async function deleteTask(projectId: number, id: number) {
   await fetch(`${BASE}/projects/${projectId}/tasks/${id}`, { method: 'DELETE' });
 }
 
+export async function patchTask(projectId: number, id: number, payload: any) {
+  const res = await fetch(`${BASE}/projects/${projectId}/tasks/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  return res.json()
+}
+
 export function wsUrl(projectId: number) {
   const url = new URL(BASE);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
