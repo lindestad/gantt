@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Subtle shadow and rounded look for panels */
+.panel {
+  @apply rounded-xl bg-white shadow-sm ring-1 ring-slate-200;
+}
+.btn {
+  @apply inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ring-1 ring-inset ring-slate-300 hover:bg-slate-50 active:bg-slate-100;
+}
+.btn-primary {
+  @apply bg-slate-900 text-white ring-slate-900 hover:bg-black;
+}
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
