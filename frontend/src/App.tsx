@@ -4,6 +4,7 @@ import TaskForm from './components/TaskForm'
 import GanttChart from './components/GanttChart'
 import { listTasks, wsUrl } from './api'
 import type { Project, ServerEvent, Task } from './types'
+import { addOrUpdateTaskUnique, removeTaskById } from './utils'
 
 export default function App(){
   const [project, setProject] = useState<Project|null>(null)
@@ -15,10 +16,10 @@ export default function App(){
     const ws = new WebSocket(wsUrl(project.id))
     ws.onmessage = (ev) => {
       const msg: ServerEvent = JSON.parse(ev.data)
-      if(msg.type === 'hydrate') setTasks(msg.tasks)
-      if(msg.type === 'task_created') setTasks(prev => [...prev, msg.task])
-      if(msg.type === 'task_updated') setTasks(prev => prev.map(t => t.id === msg.task.id ? msg.task : t))
-      if(msg.type === 'task_deleted') setTasks(prev => prev.filter(t => t.id !== msg.task.id))
+  if(msg.type === 'hydrate') setTasks(msg.tasks)
+  if(msg.type === 'task_created') setTasks(prev => addOrUpdateTaskUnique(prev, msg.task))
+  if(msg.type === 'task_updated') setTasks(prev => addOrUpdateTaskUnique(prev, msg.task))
+  if(msg.type === 'task_deleted') setTasks(prev => removeTaskById(prev, msg.task.id))
     }
     return () => ws.close()
   }, [project])
@@ -31,7 +32,7 @@ export default function App(){
   return (
     <div className="min-h-screen p-4 space-y-3">
       <TopBar project={project} setProject={setProject as any} />
-  {project && <TaskForm project={project} existingTasks={tasks} onCreated={(t)=>setTasks(prev=>[...prev, t])} />}
+  {project && <TaskForm project={project} />}
       {project && <GanttChart tasks={tasks} setTasks={setTasks} startDate={startDate} />}
       {!project && (
         <div className="panel p-6 text-slate-600">

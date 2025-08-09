@@ -222,23 +222,47 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
           </div>
         </div>
       </div>
-      {menu && (
-        <div className="fixed z-50 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-slate-200 dark:ring-slate-700 rounded-md p-2 flex gap-2"
-             style={{ left: menu.x, top: menu.y }}
-             onMouseLeave={()=>setMenu(null)}
-        >
-          {['#0ea5e9','#22c55e','#eab308','#ef4444','#6366f1','#14b8a6','#f97316'].map(c => (
-            <button key={c} className="h-6 w-6 rounded" style={{ background: c }} onClick={async()=>{
-              const id = menu.taskId
-              const cur = tasks.find(x=>x.id===id)
-              if(!cur) return
-              setTasks(tasks.map(x=> x.id===id ? { ...x, color: c } : x))
-              setMenu(null)
-              await patchTask(cur.project_id, id, { color: c })
-            }} />
-          ))}
-        </div>
-      )}
+      {menu && (()=>{
+        const cur = tasks.find(t=>t.id===menu.taskId)
+        if(!cur) return null
+        const deps = new Set<number>(cur.dependencies ?? [])
+        const toggleDep = async (depId: number) => {
+          if(depId === cur.id) return
+          if(deps.has(depId)) deps.delete(depId); else deps.add(depId)
+          const nextList = Array.from(deps)
+          setTasks(tasks.map(t => t.id===cur.id ? { ...t, dependencies: nextList } : t))
+          await patchTask(cur.project_id, cur.id, { dependencies: nextList })
+        }
+        return (
+          <div className="fixed z-50 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-slate-200 dark:ring-slate-700 rounded-md p-3 flex flex-col gap-2 min-w-56"
+               style={{ left: menu.x, top: menu.y }}
+               onMouseLeave={()=>setMenu(null)}
+          >
+            <div className="text-xs text-slate-500 pb-1">Color</div>
+            <div className="flex gap-2 pb-2 border-b border-slate-200 dark:border-slate-700">
+              {['#0ea5e9','#22c55e','#eab308','#ef4444','#6366f1','#14b8a6','#f97316'].map(c => (
+                <button key={c} className="h-6 w-6 rounded" style={{ background: c }} onClick={async()=>{
+                  setTasks(tasks.map(x=> x.id===cur.id ? { ...x, color: c } : x))
+                  setMenu(null)
+                  await patchTask(cur.project_id, cur.id, { color: c })
+                }} />
+              ))}
+            </div>
+            <div className="text-xs text-slate-500">Depends on</div>
+            <div className="max-h-48 overflow-auto pr-1">
+              {tasks.map(t => (
+                <label key={t.id} className={`flex items-center gap-2 py-1 px-1 rounded ${t.id===cur.id ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
+                  <input type="checkbox" disabled={t.id===cur.id} checked={deps.has(t.id)} onChange={()=>toggleDep(t.id)} />
+                  <span className="text-sm truncate">{t.title}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end pt-2">
+              <button className="btn" onClick={()=>setMenu(null)}>Close</button>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
