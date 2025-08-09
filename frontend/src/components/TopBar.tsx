@@ -5,6 +5,9 @@ import type { Project } from '../types'
 export default function TopBar({ project, setProject }:{ project: Project|null, setProject: (p: Project)=>void }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [name, setName] = useState('')
+  const [isDark, setIsDark] = useState<boolean>(()=>{
+    return typeof window !== 'undefined' && document.documentElement.classList.contains('dark')
+  })
 
   useEffect(() => {
     listProjects().then(setProjects)
@@ -25,6 +28,15 @@ export default function TopBar({ project, setProject }:{ project: Project|null, 
         <div className="text-slate-500 hidden sm:block">— collaborative Gantt for student orgs</div>
       </div>
       <div className="flex items-center gap-2">
+        <button
+          className="btn"
+          onClick={()=>{
+            const next = !isDark
+            setIsDark(next)
+            document.documentElement.classList.toggle('dark', next)
+          }}
+          title="Toggle dark mode"
+        >{isDark ? 'Light' : 'Dark'}</button>
         <select
           className="btn"
           value={project?.id ?? ''}

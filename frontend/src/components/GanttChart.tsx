@@ -136,10 +136,12 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
             {/* dependency lines (simple orthogonal) */}
             <svg className="absolute inset-0 pointer-events-none" style={{ left: paddingLeft }}>
               {tasks.flatMap((t, i) => (t.dependencies ?? []).map((depId) => {
-                const dep = tasks.find(x => x.id === depId)
+                const depIndex = tasks.findIndex(x => x.id === depId)
+                const dep = depIndex >= 0 ? tasks[depIndex] : null
                 if (!dep) return null
-                const sx = daysBetween(base, new Date(dep.end)) * dayWidth + Math.max(16, (daysBetween(new Date(dep.start), new Date(dep.end)) + 1) * dayWidth)
-                const sy = i * rowHeight + 12
+                const depWidth = (daysBetween(new Date(dep.start), new Date(dep.end)) + 1) * dayWidth
+                const sx = daysBetween(base, new Date(dep.end)) * dayWidth + Math.max(16, depWidth)
+                const sy = depIndex * rowHeight + 12
                 const tx = daysBetween(base, new Date(t.start)) * dayWidth
                 const ty = i * rowHeight + 12
                 const midX = Math.max(sx + 8, tx - 12)

@@ -31,7 +31,7 @@ export default function App(){
   return (
     <div className="min-h-screen p-4 space-y-3">
       <TopBar project={project} setProject={setProject as any} />
-      {project && <TaskForm project={project} onCreated={(t)=>setTasks(prev=>[...prev, t])} />}
+  {project && <TaskForm project={project} existingTasks={tasks} onCreated={(t)=>setTasks(prev=>[...prev, t])} />}
       {project && <GanttChart tasks={tasks} setTasks={setTasks} startDate={startDate} />}
       {!project && (
         <div className="panel p-6 text-slate-600">
