@@ -27,6 +27,8 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
 
   const dayWidth = zoom === 'day' ? 48 : zoom === 'week' ? 24 : 12
   const rowHeight = 32
+  const barVerticalPad = 4 // space above and below each bar
+  const barHeight = rowHeight - barVerticalPad * 2
   const paddingLeft = 240
 
   const spanDays = Math.max(60, ...tasks.map(t => daysBetween(base, new Date(t.end))+7))
@@ -120,7 +122,7 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
         <div ref={containerRef} className="relative overflow-auto scrollbar-thin" style={{ width: '100%' }}>
           {/* Header: months row + days grid */}
           <div className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-slate-200" style={{ paddingLeft }}>
-            {/* Months */}
+            {/* Months (ensure previous month label appears if the range doesn't start on day 1) */}
             <div className="flex h-6 text-xs text-slate-600">
               {(() => {
                 const groups: { label: string; days: number }[] = []
@@ -137,13 +139,16 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
                 ))
               })()}
             </div>
-            {/* Days grid headers */}
+            {/* Days grid headers (show day number only; month shown above) */}
             <div className="flex h-8 items-center text-[11px] text-slate-500">
-              {headerDays.map((d, i) => (
-                <div key={i} className={`shrink-0 border-l ${i % 7 === 0 ? 'border-slate-300' : 'border-slate-100'} text-center`} style={{ width: dayWidth }}>
-                  {d.toISOString().slice(5,10)}
-                </div>
-              ))}
+              {headerDays.map((d, i) => {
+                const dayNum = d.getDate()
+                return (
+                  <div key={i} className={`shrink-0 border-l ${i % 7 === 0 ? 'border-slate-300' : 'border-slate-100'} text-center`} style={{ width: dayWidth }}>
+                    {dayNum}
+                  </div>
+                )
+              })}
             </div>
           </div>
 
@@ -162,17 +167,18 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
               </div>
             </div>
 
-            {/* dependency lines (simple orthogonal) */}
-            <svg className="absolute inset-0 pointer-events-none" style={{ left: paddingLeft }}>
+      {/* dependency lines (simple orthogonal) */}
+            <svg className="absolute inset-0 pointer-events-none z-0" style={{ left: paddingLeft }}>
               {tasks.flatMap((t, i) => (t.dependencies ?? []).map((depId) => {
                 const depIndex = tasks.findIndex(x => x.id === depId)
                 const dep = depIndex >= 0 ? tasks[depIndex] : null
                 if (!dep) return null
                 const depWidth = (daysBetween(new Date(dep.start), new Date(dep.end)) + 1) * dayWidth
-                const sx = daysBetween(base, new Date(dep.end)) * dayWidth + Math.max(16, depWidth)
-                const sy = depIndex * rowHeight + 12
-                const tx = daysBetween(base, new Date(t.start)) * dayWidth
-                const ty = i * rowHeight + 12
+        const centerOffset = barVerticalPad + barHeight / 2
+        const sx = daysBetween(base, new Date(dep.end)) * dayWidth + Math.max(16, depWidth)
+        const sy = depIndex * rowHeight + centerOffset
+        const tx = daysBetween(base, new Date(t.start)) * dayWidth
+        const ty = i * rowHeight + centerOffset
                 const midX = Math.max(sx + 8, tx - 12)
                 return (
                   <path key={`${t.id}-${depId}`} d={`M ${sx} ${sy} L ${midX} ${sy} L ${midX} ${ty} L ${tx} ${ty}`} stroke="#64748b" strokeWidth="1.5" fill="none" markerEnd="url(#arrow)" />
@@ -189,7 +195,7 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
             {tasks.map((t,i)=>{
               const x = daysBetween(base, new Date(t.start)) * dayWidth
               const w = (daysBetween(new Date(t.start), new Date(t.end)) + 1) * dayWidth
-              const y = i * rowHeight + 4
+              const y = i * rowHeight + barVerticalPad
               function onContextMenu(e: React.MouseEvent){
                 e.preventDefault()
                 setMenu({ x: e.clientX, y: e.clientY, taskId: t.id })
@@ -204,9 +210,9 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
                 Math.max(16, w)
               ) : Math.max(16, w)
               return (
-                <div key={t.id} className="absolute" style={{ left: x + paddingLeft, top: y }}>
-                  <div className="group relative h-6 rounded-md text-white shadow-sm select-none flex items-center"
-                    style={{ width: previewWidth, background: t.color || 'rgba(15,23,42,0.9)', transform: `translateX(${previewTranslate}px)` }}
+                <div key={t.id} className="absolute z-10" style={{ left: x + paddingLeft, top: y }}>
+                  <div className="group relative rounded-md text-white shadow-sm select-none flex items-center"
+                    style={{ height: barHeight, width: previewWidth, background: t.color || 'rgba(15,23,42,0.9)', transform: `translateX(${previewTranslate}px)` }}
                     onPointerDown={e=>handlePointer(e, t, 'move')}
                     onContextMenu={onContextMenu}
                   >
