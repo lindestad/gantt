@@ -29,7 +29,7 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
   const rowHeight = 32
   const barVerticalPad = 4 // space above and below each bar
   const barHeight = rowHeight - barVerticalPad * 2
-  const paddingLeft = 240
+  const paddingLeft = 0 //240
 
   const spanDays = Math.max(60, ...tasks.map(t => daysBetween(base, new Date(t.end))+7))
   const headerDays = Array.from({length: spanDays}, (_,i)=> addDays(base, i))
