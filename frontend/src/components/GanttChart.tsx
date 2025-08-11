@@ -109,7 +109,9 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
       <div className="flex">
         {/* Left list */}
         <div className="w-[240px] border-r border-slate-200">
-          <div className="h-10 flex items-center px-3 text-xs text-slate-500">Tasks</div>
+          {/* Two-row header to match months (h-6) + days (h-8) height on the timeline side */}
+          <div className="h-6 border-b border-slate-200" />
+          <div className="h-8 flex items-center px-3 text-xs text-slate-500 border-b border-slate-200">Tasks</div>
           {tasks.map((t,i)=>(
             <div key={t.id} className="flex items-center h-[32px] px-3 border-t border-slate-100">
               <div className="truncate text-sm">{t.title}</div>
