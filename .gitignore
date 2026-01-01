@@ -52,3 +52,6 @@ coverage/
 
 # Logs
 *.log
+
+# Node modules
+node_modules

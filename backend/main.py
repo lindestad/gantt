@@ -1,23 +1,24 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from sqlalchemy import select
-from datetime import datetime
+from sqlalchemy.orm import selectinload
+
+from .database import init_db, SessionLocal, Task
+from .routers import projects, tasks
+from .websocket_manager import manager
+from .schemas import TaskOut
 
 
-def parse_ts(value: str) -> datetime:
-    # Accept 'YYYY-MM-DD', full ISO, and 'Z' suffix
-    s = value.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    return datetime.fromisoformat(s)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize DB on startup
+    await init_db()
+    yield
 
 
-from typing import Dict, List, Set, Optional
+app = FastAPI(title="Open Gantt API", lifespan=lifespan)
 
-from .database import SessionLocal, init_db, Project, Task, TaskDependency
-from .schemas import ProjectCreate, ProjectOut, TaskCreate, TaskOut, TaskPatch
-
-app = FastAPI(title="Open Gantt API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,245 +27,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-init_db()
-
-# In-memory websocket room registry per project id
-rooms: Dict[int, Set[WebSocket]] = {}
-
-
-def to_task_out(t: Task) -> TaskOut:
-    # Dependencies: list of predecessor IDs for this task
-    deps: list[int] = []
-    try:
-        from sqlalchemy import select as _select
-
-        with SessionLocal() as _db:
-            deps = [
-                row.depends_on_id
-                for row in _db.execute(
-                    _select(TaskDependency).where(TaskDependency.task_id == t.id)
-                )
-                .scalars()
-                .all()
-            ]
-    except Exception:
-        deps = []
-    return TaskOut(
-        id=t.id,
-        project_id=t.project_id,
-        title=t.title,
-        start=t.start.isoformat(),
-        end=t.end.isoformat(),
-        progress=t.progress,
-        lane=t.lane,
-        color=t.color,
-        dependencies=deps,
-    )
-
-
-@app.get("/projects", response_model=List[ProjectOut])
-def list_projects():
-    with SessionLocal() as db:
-        projects = db.execute(select(Project)).scalars().all()
-        out = []
-        for p in projects:
-            # baseline start is min task start or now
-            if p.tasks:
-                s = min(t.start for t in p.tasks)
-            else:
-                s = datetime.utcnow()
-            out.append(ProjectOut(id=p.id, name=p.name, start=s.isoformat()))
-        return out
-
-
-@app.post("/projects", response_model=ProjectOut)
-def create_project(payload: ProjectCreate):
-    with SessionLocal() as db:
-        p = Project(name=payload.name)
-        db.add(p)
-        db.commit()
-        db.refresh(p)
-        return ProjectOut(id=p.id, name=p.name, start=datetime.utcnow().isoformat())
-
-
-@app.get("/projects/{project_id}/tasks", response_model=List[TaskOut])
-def list_tasks(project_id: int):
-    with SessionLocal() as db:
-        tasks = (
-            db.execute(select(Task).where(Task.project_id == project_id))
-            .scalars()
-            .all()
-        )
-        return [to_task_out(t) for t in tasks]
-
-
-@app.post("/projects/{project_id}/tasks", response_model=TaskOut)
-def create_task(project_id: int, payload: TaskCreate):
-    with SessionLocal() as db:
-        t = Task(
-            project_id=project_id,
-            title=payload.title,
-            start=parse_ts(payload.start),
-            end=parse_ts(payload.end),
-            progress=float(payload.progress),
-            lane=payload.lane or 0,
-            color=payload.color,
-        )
-        db.add(t)
-        db.commit()
-        db.refresh(t)
-        # write dependencies if provided
-        if payload.dependencies:
-            for dep_id in set(payload.dependencies):
-                if dep_id == t.id:
-                    continue
-                db.add(TaskDependency(task_id=t.id, depends_on_id=dep_id))
-            db.commit()
-        out = to_task_out(t)
-        # broadcast
-        import anyio
-
-        async def _broadcast():
-            for ws in list(rooms.get(project_id, set())):
-                try:
-                    import json
-
-                    await ws.send_text(
-                        json.dumps({"type": "task_created", "task": out.dict()})
-                    )
-                except Exception:
-                    # drop broken connections
-                    rooms.get(project_id, set()).discard(ws)
-
-        # fire-and-forget without blocking the sync endpoint
-        anyio.from_thread.run(_broadcast)
-        return out
-
-
-@app.put("/projects/{project_id}/tasks/{task_id}", response_model=TaskOut)
-def update_task(project_id: int, task_id: int, payload: TaskCreate):
-    with SessionLocal() as db:
-        t: Optional[Task] = db.get(Task, task_id)
-        assert t and t.project_id == project_id
-        t.title = payload.title
-        t.start = parse_ts(payload.start)
-        t.end = parse_ts(payload.end)
-        t.progress = float(payload.progress)
-        t.lane = payload.lane or 0
-        t.color = payload.color
-        db.commit()
-        # replace dependencies
-        db.query(TaskDependency).filter(TaskDependency.task_id == t.id).delete()
-        if payload.dependencies:
-            for dep_id in set(payload.dependencies):
-                if dep_id == t.id:
-                    continue
-                db.add(TaskDependency(task_id=t.id, depends_on_id=dep_id))
-        db.commit()
-        db.refresh(t)
-        out = to_task_out(t)
-    import anyio
-
-    async def _broadcast():
-        for ws in list(rooms.get(project_id, set())):
-            try:
-                import json
-
-                await ws.send_text(
-                    json.dumps({"type": "task_updated", "task": out.dict()})
-                )
-            except Exception:
-                rooms.get(project_id, set()).discard(ws)
-
-    anyio.from_thread.run(_broadcast)
-    return out
-
-
-@app.delete("/projects/{project_id}/tasks/{task_id}")
-def delete_task(project_id: int, task_id: int):
-    with SessionLocal() as db:
-        t: Optional[Task] = db.get(Task, task_id)
-        if not t or t.project_id != project_id:
-            return {"ok": True}
-        db.delete(t)
-        db.commit()
-        import anyio
-
-        async def _broadcast():
-            for ws in list(rooms.get(project_id, set())):
-                try:
-                    import json
-
-                    await ws.send_text(
-                        json.dumps({"type": "task_deleted", "task": {"id": task_id}})
-                    )
-                except Exception:
-                    rooms.get(project_id, set()).discard(ws)
-
-        anyio.from_thread.run(_broadcast)
-        return {"ok": True}
-
-
-@app.patch("/projects/{project_id}/tasks/{task_id}", response_model=TaskOut)
-def patch_task(project_id: int, task_id: int, payload: TaskPatch):
-    with SessionLocal() as db:
-        t: Optional[Task] = db.get(Task, task_id)
-        assert t and t.project_id == project_id
-        if payload.title is not None:
-            t.title = payload.title
-        if payload.start is not None:
-            t.start = parse_ts(payload.start)
-        if payload.end is not None:
-            t.end = parse_ts(payload.end)
-        if payload.progress is not None:
-            t.progress = float(payload.progress)
-        if payload.lane is not None:
-            t.lane = int(payload.lane)
-        if payload.color is not None:
-            t.color = payload.color
-        if payload.dependencies is not None:
-            db.query(TaskDependency).filter(TaskDependency.task_id == t.id).delete()
-            for dep_id in set(payload.dependencies or []):
-                if dep_id == t.id:
-                    continue
-                db.add(TaskDependency(task_id=t.id, depends_on_id=dep_id))
-        db.commit()
-        db.refresh(t)
-        out = to_task_out(t)
-    import anyio
-
-    async def _broadcast():
-        for ws in list(rooms.get(project_id, set())):
-            try:
-                import json
-
-                await ws.send_text(
-                    json.dumps({"type": "task_updated", "task": out.dict()})
-                )
-            except Exception:
-                rooms.get(project_id, set()).discard(ws)
-
-    anyio.from_thread.run(_broadcast)
-    return out
+app.include_router(projects.router)
+app.include_router(tasks.router)
 
 
 @app.websocket("/ws/projects/{project_id}")
 async def ws_project(websocket: WebSocket, project_id: int):
-    await websocket.accept()
-    rooms.setdefault(project_id, set()).add(websocket)
-    # hydrate with tasks
-    with SessionLocal() as db:
-        tasks = (
-            db.execute(select(Task).where(Task.project_id == project_id))
-            .scalars()
-            .all()
-        )
-        payload = {"type": "hydrate", "tasks": [to_task_out(t).dict() for t in tasks]}
-        import json
+    await manager.connect(websocket, project_id)
 
-        await websocket.send_text(json.dumps(payload))
+    # Hydrate with existing tasks
     try:
+        async with SessionLocal() as db:
+            stmt = (
+                select(Task)
+                .where(Task.project_id == project_id)
+                .options(selectinload(Task.dependencies_assoc))
+            )
+            result = await db.execute(stmt)
+            tasks_list = result.scalars().all()
+
+            out_tasks = []
+            for t in tasks_list:
+                deps = [d.depends_on_id for d in t.dependencies_assoc]
+                out_tasks.append(
+                    TaskOut(
+                        id=t.id,
+                        project_id=t.project_id,
+                        title=t.title,
+                        start=t.start.isoformat(),
+                        end=t.end.isoformat(),
+                        progress=t.progress,
+                        lane=t.lane,
+                        color=t.color,
+                        dependencies=deps,
+                    ).dict()
+                )
+
+            await websocket.send_json({"type": "hydrate", "tasks": out_tasks})
+
         while True:
-            await websocket.receive_text()  # keep alive; client doesn't send anything
+            await websocket.receive_text()  # keep alive
     except WebSocketDisconnect:
-        rooms.get(project_id, set()).discard(websocket)
+        manager.disconnect(websocket, project_id)
+    except Exception:
+        # Handle other exceptions to ensure disconnect is called
+        manager.disconnect(websocket, project_id)
