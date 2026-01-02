@@ -1,25 +1,27 @@
 import { useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { format, addDays } from 'date-fns'
 import { createTask } from '../api'
 import type { Project } from '../types'
 
 export default function TaskForm({ project }:{ project: Project }) {
   const [title, setTitle] = useState('New task')
-  const [start, setStart] = useState(() => new Date().toISOString().slice(0,10))
-  const [end, setEnd] = useState(() => new Date(Date.now()+86400000).toISOString().slice(0,10))
-  const [saving, setSaving] = useState(false)
+  const [start, setStart] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [end, setEnd] = useState(() => format(addDays(new Date(), 1), 'yyyy-MM-dd'))
 
-  async function submit() {
-    if (saving) return
-    setSaving(true)
-    try {
-      await createTask(project.id, { title, start, end, progress: 0 })
+  const createTaskMutation = useMutation({
+    mutationFn: (payload: any) => createTask(project.id, payload),
+    onSuccess: () => {
       // task will arrive via websocket 'task_created'
       setTitle('New task')
-      setStart(new Date().toISOString().slice(0,10))
-      setEnd(new Date(Date.now()+86400000).toISOString().slice(0,10))
-    } finally {
-      setSaving(false)
+      setStart(format(new Date(), 'yyyy-MM-dd'))
+      setEnd(format(addDays(new Date(), 1), 'yyyy-MM-dd'))
     }
+  })
+
+  async function submit() {
+    if (createTaskMutation.isPending) return
+    createTaskMutation.mutate({ title, start, end, progress: 0 })
   }
   return (
     <div className="panel p-3 flex items-end gap-2">
@@ -42,7 +44,7 @@ export default function TaskForm({ project }:{ project: Project }) {
           if (v < start) { setEnd(start) } else { setEnd(v) }
         }} />
       </div>
-  <button className="btn btn-primary" onClick={submit} disabled={saving}>{saving ? 'Adding…' : 'Add task'}</button>
+  <button className="btn btn-primary" onClick={submit} disabled={createTaskMutation.isPending}>{createTaskMutation.isPending ? 'Adding…' : 'Add task'}</button>
     </div>
   )
 }

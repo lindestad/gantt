@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { startOfDay, differenceInCalendarDays, addDays, format, parseISO } from 'date-fns'
 import type { Task } from '../types'
 import { updateTask, deleteTask, patchTask } from '../api'
 
 type Zoom = 'day'|'week'|'month'
-
-function startOfDay(d: Date){ const x = new Date(d); x.setHours(0,0,0,0); return x }
-function daysBetween(a: Date, b: Date){ return Math.round((startOfDay(b).getTime()-startOfDay(a).getTime())/86400000) }
-function addDays(d: Date, n: number){ const x = new Date(d); x.setDate(x.getDate()+n); return x }
 
 type DragState = {
   id: number,
@@ -20,10 +18,22 @@ type DragState = {
 export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[], setTasks: (t: Task[])=>void, startDate: string }) {
   const [zoom, setZoom] = useState<Zoom>('week')
   const containerRef = useRef<HTMLDivElement>(null)
-  const base = useMemo(()=> new Date(startDate), [startDate])
+  const base = useMemo(()=> parseISO(startDate), [startDate])
   const [menu, setMenu] = useState<{ x: number, y: number, taskId: number }|null>(null)
   const [drag, setDrag] = useState<DragState|null>(null)
   const dragRef = useRef<DragState|null>(null)
+
+  const updateTaskMutation = useMutation({
+    mutationFn: (payload: {id: number, data: any}) => updateTask(payload.data.project_id, payload.id, payload.data)
+  })
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: (task: Task) => deleteTask(task.project_id, task.id)
+  })
+
+  const patchTaskMutation = useMutation({
+    mutationFn: (payload: {id: number, data: any}) => patchTask(payload.data.project_id, payload.id, payload.data)
+  })
 
   const dayWidth = zoom === 'day' ? 48 : zoom === 'week' ? 24 : 12
   const rowHeight = 32
@@ -31,23 +41,27 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
   const barHeight = rowHeight - barVerticalPad * 2
   const paddingLeft = 0 //240
 
-  const spanDays = Math.max(60, ...tasks.map(t => daysBetween(base, new Date(t.end))+7))
+  const spanDays = Math.max(60, ...tasks.map(t => differenceInCalendarDays(parseISO(t.end), base)+7))
   const headerDays = Array.from({length: spanDays}, (_,i)=> addDays(base, i))
 
   function commitTaskChange(startTask: Task, dxDays: number, mode: 'move'|'resize-start'|'resize-end'){
-    const s = new Date(startTask.start); const e = new Date(startTask.end)
+    const s = parseISO(startTask.start); const e = parseISO(startTask.end)
+    let newStart = s
+    let newEnd = e
+
     if(mode === 'resize-start'){
-      s.setDate(s.getDate()+dxDays)
-      if(s > e) s.setTime(e.getTime())
+      newStart = addDays(s, dxDays)
+      if(newStart > newEnd) newStart = newEnd
     }else if(mode === 'resize-end'){
-      e.setDate(e.getDate()+dxDays)
-      if(e < s) e.setTime(s.getTime())
+      newEnd = addDays(e, dxDays)
+      if(newEnd < newStart) newEnd = newStart
     }else{
-      s.setDate(s.getDate()+dxDays); e.setDate(e.getDate()+dxDays)
+      newStart = addDays(s, dxDays)
+      newEnd = addDays(e, dxDays)
     }
-    const updated = { ...startTask, start: s.toISOString(), end: e.toISOString() }
+    const updated = { ...startTask, start: format(newStart, "yyyy-MM-dd'T'HH:mm:ss"), end: format(newEnd, "yyyy-MM-dd'T'HH:mm:ss") }
     setTasks(tasks.map(t => t.id === startTask.id ? updated : t))
-    updateTask(startTask.project_id, startTask.id, updated).catch(()=>{})
+    updateTaskMutation.mutate({ id: startTask.id, data: updated })
   }
 
   function handlePointer(e: React.PointerEvent, task: Task, mode: 'move'|'resize-start'|'resize-end'){
@@ -89,7 +103,7 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
   }
 
   async function removeTask(task: Task){
-    await deleteTask(task.project_id, task.id)
+    deleteTaskMutation.mutate(task)
     setTasks(tasks.filter(t => t.id !== task.id))
   }
 
@@ -175,11 +189,11 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
                 const depIndex = tasks.findIndex(x => x.id === depId)
                 const dep = depIndex >= 0 ? tasks[depIndex] : null
                 if (!dep) return null
-                const depWidth = (daysBetween(new Date(dep.start), new Date(dep.end)) + 1) * dayWidth
+                const depWidth = (differenceInCalendarDays(parseISO(dep.end), parseISO(dep.start)) + 1) * dayWidth
         const centerOffset = barVerticalPad + barHeight / 2
-        const sx = daysBetween(base, new Date(dep.end)) * dayWidth + Math.max(16, depWidth)
+        const sx = differenceInCalendarDays(parseISO(dep.end), base) * dayWidth + Math.max(16, depWidth)
         const sy = depIndex * rowHeight + centerOffset
-        const tx = daysBetween(base, new Date(t.start)) * dayWidth
+        const tx = differenceInCalendarDays(parseISO(t.start), base) * dayWidth
         const ty = i * rowHeight + centerOffset
                 const midX = Math.max(sx + 8, tx - 12)
                 return (
@@ -195,8 +209,8 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
 
             {/* task bars */}
             {tasks.map((t,i)=>{
-              const x = daysBetween(base, new Date(t.start)) * dayWidth
-              const w = (daysBetween(new Date(t.start), new Date(t.end)) + 1) * dayWidth
+              const x = differenceInCalendarDays(parseISO(t.start), base) * dayWidth
+              const w = (differenceInCalendarDays(parseISO(t.end), parseISO(t.start)) + 1) * dayWidth
               const y = i * rowHeight + barVerticalPad
               function onContextMenu(e: React.MouseEvent){
                 e.preventDefault()
@@ -239,7 +253,7 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
           if(deps.has(depId)) deps.delete(depId); else deps.add(depId)
           const nextList = Array.from(deps)
           setTasks(tasks.map(t => t.id===cur.id ? { ...t, dependencies: nextList } : t))
-          await patchTask(cur.project_id, cur.id, { dependencies: nextList })
+          patchTaskMutation.mutate({ id: cur.id, data: { dependencies: nextList } })
         }
         return (
           <div className="fixed z-50 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-slate-200 dark:ring-slate-700 rounded-md p-3 flex flex-col gap-2 min-w-56"
@@ -252,7 +266,7 @@ export default function GanttChart({ tasks, setTasks, startDate }:{ tasks: Task[
                 <button key={c} className="h-6 w-6 rounded" style={{ background: c }} onClick={async()=>{
                   setTasks(tasks.map(x=> x.id===cur.id ? { ...x, color: c } : x))
                   setMenu(null)
-                  await patchTask(cur.project_id, cur.id, { color: c })
+                  patchTaskMutation.mutate({ id: cur.id, data: { color: c } })
                 }} />
               ))}
             </div>

@@ -1,24 +1,32 @@
-import { useEffect, useState } from 'react'
-import { createProject, listProjects } from '../api'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { createProject, fetchProjects } from '../api'
 import type { Project } from '../types'
 
 export default function TopBar({ project, setProject }:{ project: Project|null, setProject: (p: Project)=>void }) {
-  const [projects, setProjects] = useState<Project[]>([])
+  const queryClient = useQueryClient()
   const [name, setName] = useState('')
   const [isDark, setIsDark] = useState<boolean>(()=>{
     return typeof window !== 'undefined' && document.documentElement.classList.contains('dark')
   })
 
-  useEffect(() => {
-    listProjects().then(setProjects)
-  }, [])
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects'],
+    queryFn: fetchProjects
+  })
+
+  const createProjectMutation = useMutation({
+    mutationFn: createProject,
+    onSuccess: (newProject) => {
+      queryClient.setQueryData(['projects'], (old: Project[] = []) => [newProject, ...old])
+      setProject(newProject)
+      setName('')
+    }
+  })
 
   async function addProject() {
     if (!name.trim()) return
-    const p = await createProject(name.trim())
-    setName('')
-    setProjects(prev => [p, ...prev])
-    setProject(p)
+    createProjectMutation.mutate(name.trim())
   }
 
   return (
@@ -42,12 +50,12 @@ export default function TopBar({ project, setProject }:{ project: Project|null, 
           value={project?.id ?? ''}
           onChange={e => {
             const id = Number(e.target.value)
-            const p = projects.find(p => p.id === id)
+            const p = projects.find((p: Project) => p.id === id)
             if (p) setProject(p)
           }}
         >
           <option value="" disabled>Select project…</option>
-          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {projects.map((p: Project) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <input
           placeholder="New project name"
@@ -55,7 +63,9 @@ export default function TopBar({ project, setProject }:{ project: Project|null, 
           value={name}
           onChange={e => setName(e.target.value)}
         />
-        <button className="btn btn-primary" onClick={addProject}>Create</button>
+        <button className="btn btn-primary" onClick={addProject} disabled={createProjectMutation.isPending}>
+          {createProjectMutation.isPending ? 'Creating...' : 'Create'}
+        </button>
       </div>
     </div>
   )
